@@ -1,0 +1,3 @@
+PORT 7777
+WWWROOT wwwroot
+GENERATED_HTMLS_DIR generated_htmls

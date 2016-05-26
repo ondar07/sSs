@@ -1,0 +1,44 @@
+
+==================================================
+
+WHAT IT IS
+
+This is a web server
+
+Authors: mipteam (Ondar Adygzhy, Podkopaev Alexander, Dvinskikh Darina, Nogin Vladislav)
+
+==================================================
+
+HOW IT WORKS
+
+1) This server uses Linux's epoll facility, which is readiness notification facility in Linux (epoll was introduced in Linux 2.6, so you should be sure that you have suitable Linux version)
+
+Why epoll?
+select() monitors a fixed number of descriptors. poll() doesn't have a fixed limit, but it performs a linear scan of all descriptors every time to check readiness notification ( complexity - O(n) )
+
+epoll() doesn't have such disadvantages. Moreover, it can handle a larger number of events.
+
+Also, edge-triggered mode is used
+
+===================================================
+
+FEATURES
+
+1) epoll
+
+2) support a wide range of mime types
+
+3) support indexes (in the terms of Apache)
+
+4) support detecting of mime-type
+Dut to supporting the database (sqlite3) with pathes for icons, the web server is able to detect correct file type icon path
+
+
+===================================================
+
+WHERE IT BE USEFUL
+
+So you are able to share some files between your house devices (mobile phone, tablet)
+
+Another application -- sharing files between virtual machines
+
