@@ -142,6 +142,8 @@ char * get_icon_path(char *dir_path, char *filename) {
         sqlite3_bind_text(res, 1, ext, strlen(ext), NULL);
     } else {
         PRINT("[get_icon_path]ERROR: failed to execute statement: %s\n", sqlite3_errmsg(db));
+        icon_path = NULL;
+        goto free_memory;
     }
     
     // run the SQL statement
@@ -149,6 +151,18 @@ char * get_icon_path(char *dir_path, char *filename) {
     // Our SQL statement returns only one row of data, therefore, we call this function only once.
     step = sqlite3_step(res);
     
+    if (step != SQLITE_DONE && step != SQLITE_ROW) {
+        // there's probably a problem
+        #ifdef DEBUG
+        PRINT("ERROR in sqlite3_step!\n");
+        #endif 
+        sqlite3_finalize(res);
+        sqlite3_close(db);
+        icon_path = NULL;
+        goto free_memory;
+    }
+    PRINT("STEP returrrrrrrrrrrrrrrrrn %d\n", step);
+
     if (step == SQLITE_DONE) {
         // SELECT return 0 rows
 #ifdef DEBUG
@@ -156,9 +170,10 @@ char * get_icon_path(char *dir_path, char *filename) {
 #endif 
         sqlite3_finalize(res);
         sqlite3_close(db);
+        icon_path = NULL;
         goto free_memory;
-    } else
-
+    } 
+    else
     if (step == SQLITE_ROW) {
         printf("SSSSQQQQLITE RAW=%s\n ", sqlite3_column_text(res, 0));
 
