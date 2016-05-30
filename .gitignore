@@ -45,3 +45,6 @@ links
 
 # 
 generated_htmls/*
+
+# logs file
+LOGS

@@ -5,7 +5,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define LOG_STREAM stdout
+#define USE_LOG_FILE
+
+#ifdef USE_LOG_FILE
+  extern FILE *logfp;
+  #define LOG_STREAM logfp
+#else
+  #define LOG_STREAM stdout
+#endif
 
 #define PRINT(...) fprintf(LOG_STREAM, __VA_ARGS__)
 
