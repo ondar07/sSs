@@ -71,31 +71,13 @@ char * get_ext_in_filename(char *dir_path, char *filename) {
 }
 
 char * get_icon_path(char *dir_path, char *filename) {
-
-    #if 0
-#define ICON_PATH_LENGTH (strlen("jpg_icon.png") + 1)
-    char *icon_path = (char *)malloc(ICON_PATH_LENGTH * sizeof(char));
-
-    if (!icon_path) {
-        #ifdef DEBUG
-        PRINT("[get_icon_path]ERROR: out of memory for icon_path\n");
-        #endif
-        return NULL;
-    }
-    
-    memset(icon_path, '\0', ICON_PATH_LENGTH);
-    strcpy(icon_path, "jpg_icon.png");
-
-    return icon_path;
-    #endif
-
     char *ext;
     sqlite3 *db;    // this structure defines db handle
     char *err_msg = 0;
     sqlite3_stmt *res;  // represents a single SQL statement (statement handle)
     char sql[] = "SELECT path_to_icon FROM Icons WHERE extension = ?";
     int step;
-    char *icon_path;
+    char *icon_path = NULL;
     int rc;
     
     ext = get_ext_in_filename(dir_path, filename);
@@ -120,9 +102,6 @@ char * get_icon_path(char *dir_path, char *filename) {
         // sqlite3_errmsg() function returns a description of the error
         PRINT("[get_icon_path]ERROR: Cannot open database: %s\n", sqlite3_errmsg(db));
         sqlite3_close(db);
-
-        // to return NULL
-        icon_path = NULL;
         
         goto free_memory;
     }
@@ -142,7 +121,6 @@ char * get_icon_path(char *dir_path, char *filename) {
         sqlite3_bind_text(res, 1, ext, strlen(ext), NULL);
     } else {
         PRINT("[get_icon_path]ERROR: failed to execute statement: %s\n", sqlite3_errmsg(db));
-        icon_path = NULL;
         goto free_memory;
     }
     
@@ -158,7 +136,6 @@ char * get_icon_path(char *dir_path, char *filename) {
         #endif 
         sqlite3_finalize(res);
         sqlite3_close(db);
-        icon_path = NULL;
         goto free_memory;
     }
     PRINT("STEP returrrrrrrrrrrrrrrrrn %d\n", step);
@@ -170,7 +147,6 @@ char * get_icon_path(char *dir_path, char *filename) {
 #endif 
         sqlite3_finalize(res);
         sqlite3_close(db);
-        icon_path = NULL;
         goto free_memory;
     } 
     else

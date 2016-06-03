@@ -109,7 +109,10 @@ void deinit_server() {
 }
 
 //
-// @addr    -- IP addr or "www.mysite.com"
+// (prepare for connection) 
+// fill some structures
+//
+// @addr    -- IP addr or "www.mysite.com" (but we call with NULL, it means local host)
 // @service -- "http" or port number
 //
 // returns: struct addrinfo
@@ -118,15 +121,17 @@ static struct addrinfo *resolve_server_addr_and_port(const char *addr, const cha
   int status;
   struct addrinfo hints;
   struct addrinfo *servinfo;    // getaddrinfo function returns a list of structures
+                                // this var (servinfo) is a pointer to a head of the list
 
   memset(&hints, 0, sizeof(hints));
   hints.ai_family = AF_UNSPEC;      // return IPv4 and IPv6 choices
   hints.ai_socktype = SOCK_STREAM;  // stream TCP socket
-  hints.ai_flags = AI_PASSIVE;
+  hints.ai_flags = AI_PASSIVE;      // this flag allows to assign IP of THIS LOCAL host for structures of socket
 
-  if ((status = getaddrinfo(NULL, PORT, &hints, &servinfo)) != 0) {
+  // this function returns in @servinfo a pointer to the list of addrinfo structures
+  if ((status = getaddrinfo(addr, service, &hints, &servinfo)) != 0) {
     perror("[resolve_server_addr_and_port]ERROR: getaddrinfo\n");
-    exit(1);
+    exit(-1);
   }
   return servinfo;
 }
@@ -139,6 +144,7 @@ int create_and_bind_listen_socket() {
   int reuse_addr = 1;   // this is option value to reuse addr
   struct addrinfo *p;
 
+  // we call with NULL, it means local host
 #define SRVNODE NULL
   servinfo = resolve_server_addr_and_port(SRVNODE, PORT);
 #undef SRVNODE
@@ -146,31 +152,39 @@ int create_and_bind_listen_socket() {
   // find possible result from servinfo list
   // and create a socket for connecting to server
   for (p = servinfo; p != NULL; p = p->ai_next) {
-    listenSocketID = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol);
+    listenSocketID = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
     if (-1 == listenSocketID) {
       perror("[create_and_bind_listen_socket]createListenSocket");
       continue;
     }
 
-    // use port again
+    // sometimes after server reboot, socket may continue to be at the kernel
+    // if you don't wait, you could call setcokopt()
+    // ( use port again )
     if (setsockopt(listenSocketID, SOL_SOCKET, SO_REUSEADDR, &reuse_addr, sizeof(int)) == -1) {
       perror("[create_and_bind_listen_socket]setsockopt(reuse addr)");
       exit(1);
     }
 
-    // setup the TCP listening socket
-    if(bind(listenSocketID, servinfo->ai_addr, (int)servinfo->ai_addrlen) == 0) {
+    // bind listenSocket with listened port
+    // (ai_addr field has been filled with needed address info by getaddrinfo() earlier)
+    if(bind(listenSocketID, p->ai_addr, (int)p->ai_addrlen) == 0) {
+      // it managed to get a successful binding
       break;
+    } else {
+      // close this failed descriptor
+      // and consider next element of the list
+      close(listenSocketID);
     }
-    
-    close(listenSocketID);
   }
 
   if (NULL == p) {
     perror("[create_and_bind_listen_socket]ERROR: cannot bind");
-    exit(1);
+    exit(-1);
   }
 
+  // free the list of structures
   freeaddrinfo(servinfo);
+  
   return listenSocketID;
 }

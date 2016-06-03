@@ -5,11 +5,14 @@
 
 #define GET_REQUEST      0
 #define HEAD_REQUEST     1
+#define POST_REQUEST     2
 #define UNKNOWN_REQUEST -1
 
 #define MEM_ZERO(ptr, size) memset((ptr), '\0', size * sizeof(char));
 
-static void handle_http_GET(char *request, size_t *cur_pos, int sfd);
+static int handle_http_GET(char *request, size_t *cur_pos, int sfd, Node_t *node);
+static int handle_http_POST(char *request, size_t *cur_pos, int sfd, Node_t *node);
+static int send_file(FILE *fp, int sfd);
 
 // this function reads word, skipping '\t', ' ', '\n', '\r' 
 // @original_req -- a pointer to original request string
@@ -75,26 +78,150 @@ static int get_request_type(char *request, size_t *cur_pos) {
     return UNKNOWN_REQUEST;
   }
 
+  PRINT("[get_request_type]request_type = %s\n", requestMethodType);
+
   if (strcmp("GET", requestMethodType) == 0) {
     return GET_REQUEST;
   }
   else if (strcmp("HEAD", requestMethodType) == 0) {
     return HEAD_REQUEST;
+  } 
+  else if (strcmp("POST", requestMethodType) == 0) {
+    return POST_REQUEST;
   } else {
     return UNKNOWN_REQUEST;
   }
 }
 #undef METHOD_TYPE_LENGTH
 
-// What should server do with a request?
-// 1. find out a type of request (GET / HEAD / etc)
-// 2. handle the request and see if the needed resource exists
-// 3. read its content
-// 4. send this content correct file type
-void handle(char *request, int sfd) {
+
+
+// This function is used in cases 
+// when a request comes in parts
+static char *add_new_part_to_old_request(Node_t *node, char *next_part_of_request) {
+  size_t new_part_length;
+  size_t len;
+
+  if (next_part_of_request == NULL) {
+#ifdef DEBUG
+    //PRINT("[add_new_part_to_old_request]next_part_of_request == NULL\n");
+#endif
+    return node->data.header;
+  }
+
+  if (!node) {
+#ifdef DEBUG
+    PRINT("[add_new_part_to_old_request]ERROR: node is NULL\n");
+#endif
+    return NULL;
+  }
+
+  new_part_length = strlen(next_part_of_request);
+  if (node->data.header == NULL) {
+    len = 0;
+  } else {
+    len = strlen(node->data.header);
+  }
+
+  node->data.header = (char *)realloc(node->data.header, new_part_length + 1);
+  if (!node->data.header) {
+    // out of memory
+    return NULL;
+  }
+
+  // memset
+  memset(node->data.header + len, '\0', new_part_length + 1);
+
+  // add null-terminated byte at the end
+  node->data.header = strncat(node->data.header, next_part_of_request, new_part_length);
+  return node->data.header;
+}
+
+
+//
+// define end of a header (in @request)
+//
+// return NULL if header is NOT FULL
+//
+static char * is_header_full(char *request) {
+#define CRLFCRLF "\r\n\r\n"
+  return strstr(request, CRLFCRLF);
+#undef CRLFCRLF
+}
+
+static ssize_t send_warning_msg(char *message, int socket_fd);
+
+//
+// This function processes @request
+//
+// For each connection the server keeps (create if it needs) a structure (struct Node; see in ext_epoll_data.h)
+//
+// return:
+//     -1, if the request was not completed yet (so connections will not be closed yet)
+//     0,  if the request was completed (and connection should be closed)
+int handle(char *request, int sfd, List_t *list) {
+  Node_t *node;
   int request_type;
+  int res;
   size_t cur_pos = 0;   // current position (offset) in @request for next reading
                         // at the beginning it equal to 0
+
+  // find possible element of ext_data_t
+  node = find_node(list, sfd);
+  if (node) {
+    if (is_header_full(node->data.header) ) {
+      // header is full, so we send it earlier
+      // and it needs only to send a requested resource
+      // for GET requestes
+      res = send_file(node->data.fp, sfd);
+      goto check_res;
+    }
+
+    // else (header is NOT FULL yet)
+    node->data.header = add_new_part_to_old_request(node, request);
+    if (node->data.header == NULL) {
+      PRINT("[handle]ERROR: out of memory for request\n");
+      // TODO:
+      // send_warning_msg();
+    }
+    // we can reassign @request, because a function, which causes this function, 
+    // keeps original @request and frees it later
+    request = node->data.header;
+  } else {
+    // for the first time in this connection
+    ext_epoll_data_t data;
+    memset(&data, 0, sizeof(ext_epoll_data_t));
+    data.sfd = sfd;
+
+    // element shouldn't exist yet
+    
+    // if it exists already, it's so strange
+    if (insert_node(list, data) < 0) {
+#ifdef DEBUG
+      PRINT("[handle] ERROR: insert a node \n");
+#endif
+      // TODO: send_warning_msg(); ? ? ?
+      // return 0;
+    }
+    node = find_node(list, sfd);
+    node->data.header = add_new_part_to_old_request(node, request);
+    request = node->data.header;
+  }
+
+  if (!is_header_full(request)) {
+#ifdef DEBUG
+    PRINT("header is not full yet\n");
+#endif
+    send_warning_msg("header is not correct\n", sfd);
+    return 0;
+  }
+
+  // here @request may be different from original @request
+  // For example:
+  //    client (web-browser) sends "G" firstly (in this case now @request="G")
+  //    after that it sends "ET / HTTP/1.0" (original @request has this value)
+  //    but the web-server can store previous @request and concatenate new value of request
+  //    to previous one, so here @request should be "GET / HTTP/1.0"
 
   request_type = get_request_type(request, &cur_pos);
 
@@ -104,24 +231,70 @@ void handle(char *request, int sfd) {
 #ifdef DEBUG
       PRINT("GET request on sfd=%d\n", sfd);
 #endif
-      handle_http_GET(request, &cur_pos, sfd);
-      break;
-  
+      res = handle_http_GET(request, &cur_pos, sfd, node);
+      if (res < 0) {
+        return 0;
+      }
+
+      // now we should send a file, so
+      return -1;
     case HEAD_REQUEST :
-      
 #ifdef DEBUG
       PRINT("HEAD request on sfd=%d\n", sfd);
 #endif
-      ;// TODO: send a header
+      ;
+      break;
+    case POST_REQUEST :
+#ifdef DEBUG
+      PRINT("POST request on sfd=%d\n", sfd);
+#endif
+      // but it is not implemented
+      res = handle_http_POST(request, &cur_pos, sfd, node);
+      if (res < 0) {
+        return -1;
+      }
       break;
 
     default :
 #ifdef DEBUG
       PRINT("UNKNOWN_REQUEST\n");
-      //TODO: send ("400 Bad Request\n", sfd);
 #endif
+      // 
+      if ( is_header_full(request) ) {
+#ifdef DEBUG
+        PRINT("Header is full, but request type is not known\n" );
+#endif
+        // it means that we get full header
+        // but request type is NOT KNOWN
+        send_warning_msg("UNKNOWN_REQUEST", sfd);
+        return 0;
+      }
+
+
+      #ifdef DEBUG
+      PRINT("THIS IS UNKNOWN REQUEST: WAIT OTHER PARTS OF REQUEST\n");
+      PRINT("%s\n", node->data.header);
+      #endif
+      return -1;
   }
+
+check_res:
+  if (res == 0) {
+    if (!node)
+      return 0;
+
+    // free memory
+    if (node->data.header)
+      free(node->data.header);
+
+    remove_node(list, sfd);
+    return 0;
+  }
+
+  //
+  return -1;
 }
+
 
 
 #define HTTP_1_0  0
@@ -299,17 +472,23 @@ static int check_mime_support(char *extension, char *mime_type) {
 static ssize_t send_bytes(char *bytes, size_t length, int socket_fd) {
   ssize_t bytes_sent;
 
-  // flags is 0!
-  bytes_sent = send(socket_fd, bytes, length, 0);
+  // flags is MSG_NOSIGNAL
+  //    not to send SIGPIPE on errors on stream oriented sockets
+  //    when the other end BREAKS the connection
+  bytes_sent = send(socket_fd, bytes, length, MSG_NOSIGNAL);
 
+  if (bytes_sent == -1) {
+    if (errno == ECONNRESET) {
+      PRINT("Connection reset by peer\n");
+    }
+    PRINT("[send_bytes]ERROR: cannot send a reply to client with sfd=%d (errno=%d )\n", socket_fd, errno);
+  }
+
+  PRINT("[send_bytes]bytes_sent=%zu\n", bytes_sent);
 #ifdef DEBUG
   //PRINT("\nSEND msg: %s\n", bytes);
 #endif
 
-  // TODO: analyze errno!
-  if (bytes_sent == -1)
-    PRINT("[events_handling]ERROR: cannot send a reply to client with fd=%d\n", socket_fd);
-      
   return bytes_sent;
 }
 
@@ -380,22 +559,50 @@ static ssize_t send_header(char *http_version, char *status_code, char *content_
 //
 //
 //
-static void send_file(FILE *fp, int sfd) {
-  char current_char;
+static int send_file(FILE *fp, int sfd) {
+
+#define CHUNK_SIZE 1024
+
+  char buf[CHUNK_SIZE];
   ssize_t bytes_sent;
   ssize_t bytes_read;
-  ssize_t total_bytes_sent = 0;
+  int res = -1;
 
-  while ( (bytes_read = fread(&current_char, sizeof(char), 1, fp) ) != 0 ) {
-    bytes_sent = send_bytes(&current_char, bytes_read, sfd);
-    if (bytes_sent == -1) {
-      PRINT("ERROR: [send_file] \n");
-    }
-    total_bytes_sent += bytes_sent;
-  }
+  memset(buf, '\0', CHUNK_SIZE);
+
+  // 
+  bytes_read = fread(buf, sizeof(char), CHUNK_SIZE, fp);
+  
 #ifdef DEBUG
-  PRINT("total bytes sent = %zu\n", total_bytes_sent);
+  PRINT("SEND_FILE: bytes_read=%zu\n", bytes_read);
 #endif
+
+  if (bytes_read < CHUNK_SIZE) {
+    if ( feof(fp) != 0 ) {
+      // end of file
+      // we send the whole file
+      if (fclose(fp) != 0) {
+#ifdef DEBUG
+        PRINT("[send_file]ERROR: fclose (errno=%d) \n", errno);
+#endif
+      }
+      fp = NULL;
+      res = 0;
+    }
+  }
+  bytes_sent = send_bytes(buf, bytes_read, sfd);
+  if (bytes_sent == -1) {
+    PRINT("[send_file]ERROR: send_bytes return -1 (errno=%d)\n", errno);
+    // to close connection
+    return 0;
+  }
+  
+#ifdef DEBUG
+  PRINT("bytes sent = %zu\n", bytes_sent);
+#endif
+
+  // continue to send
+  return res;
 }
 
 //
@@ -443,7 +650,7 @@ static int get_type_of_file(const char *path) {
 
 //
 //
-static void send_response_for_reg_file(char *file_path, char *http_version, char *content_type, int socket_fd) {
+static void send_response_for_reg_file(char *file_path, char *http_version, char *content_type, int socket_fd, Node_t *node) {
   FILE *fp;
   long content_length;
 
@@ -454,6 +661,7 @@ static void send_response_for_reg_file(char *file_path, char *http_version, char
     send_warning_msg("404 file not found", socket_fd);
     return;
   }
+
 
   // 2. content-length
   content_length = get_file_size(fp);
@@ -471,7 +679,10 @@ static void send_response_for_reg_file(char *file_path, char *http_version, char
   }
 
   // 4. read file and send it
-  send_file(fp, socket_fd);
+
+  node->data.fp = fp;
+
+  return;
 
 close_file:
   fclose(fp);
@@ -489,7 +700,7 @@ extern char *generate_html_name(char *dir_name);
 //
 // @dir_path -- directory path (relative to WWWROOT dir)
 // @dir_name -- directory name
-static void send_response_for_dir(char *dir_path, char *dir_name, char *http_version, int socket_fd) {
+static void send_response_for_dir(char *dir_path, char *dir_name, char *http_version, int socket_fd, Node_t *node) {
   char *generated_html_name;
 
   // see in html_generation_for_dir.c
@@ -518,7 +729,7 @@ static void send_response_for_dir(char *dir_path, char *dir_name, char *http_ver
 
   // 3. send it
 send_html_file:
-  send_response_for_reg_file(generated_html_name, http_version, "text/html", socket_fd);
+  send_response_for_reg_file(generated_html_name, http_version, "text/html", socket_fd, node);
 
 free_name:
   free(generated_html_name);
@@ -527,7 +738,7 @@ free_name:
 
 //
 //
-static void send_response(char *http_version, char *filename, char *content_type, int socket_fd) {
+static void send_response(char *http_version, char *filename, char *content_type, int socket_fd, Node_t *node) {
   char *full_file_path; // not full; relative to WWWROOT
   
   int file_type;
@@ -539,7 +750,7 @@ static void send_response(char *http_version, char *filename, char *content_type
 #define FULL_FILE_PATH_LENGTH (FILE_NAME_LENGTH + strlen(WWWROOT) + 1)
   full_file_path = (char *)malloc(FULL_FILE_PATH_LENGTH * sizeof(char));
   if (!full_file_path) {
-    PRINT("[send_response](char *)joke_path is NULL\n");
+    PRINT("[send_response]full_file_path is NULL\n");
     return;
   }
 
@@ -559,10 +770,10 @@ static void send_response(char *http_version, char *filename, char *content_type
 
   switch (file_type) {
     case REGULAR_FILE :
-      send_response_for_reg_file(full_file_path, http_version, content_type, socket_fd);
+      send_response_for_reg_file(full_file_path, http_version, content_type, socket_fd, node);
       break;
     case DIRECTORY :
-      send_response_for_dir(full_file_path, filename, http_version, socket_fd);
+      send_response_for_dir(full_file_path, filename, http_version, socket_fd, node);
       break;
     case UNKOWN_FILE_TYPE:
       send_warning_msg("file type is not supported\n", socket_fd);
@@ -576,7 +787,7 @@ static void send_response(char *http_version, char *filename, char *content_type
 }
 
 
-static void handle_http_GET(char *request, size_t *cur_pos, int sfd) {
+static int handle_http_GET(char *request, size_t *cur_pos, int sfd, Node_t *node) {
   char *filename = (char *)malloc(FILE_NAME_LENGTH * sizeof(char));
 
   char *extension = (char *)malloc(EXTENSION_LENGTH * sizeof(char));
@@ -593,39 +804,48 @@ static void handle_http_GET(char *request, size_t *cur_pos, int sfd) {
 
   if ( read_word_from_req_into_buf(request, filename, cur_pos, FILE_NAME_LENGTH) < 0 ) {
     PRINT("[handle_http_GET]couldn't read filename in request\n");
-    return;
+    return -1;
   }
 
   // 
   if ( (http_version = get_http_version(request, cur_pos)) < 0 ) {
     send_warning_msg("501 Not Implemented", sfd);
-    return;
+    // return -1;
+    return 0;
   }
 
   if (strcmp(filename, "/") == 0) {
-    // TODO
     strcpy(filename, WWWROOT_PAGE);
   }
   
   if ( get_extension(filename, extension, EXTENSION_LENGTH) < 0 ) {
     PRINT("File extension isn't represented\n");
-    //send_warning_msg("400 Bad Request\n", sfd);
   }
-
-  // 
+ 
   if ( check_mime_support(extension, mime) < 0 )
   {
     PRINT("Mime not supported\n");
+    //send_warning_msg("Mime of this file is not supported", sfd);
+    //return 0;
   }
 
 send_response:
-  send_response("HTTP/1.1", filename, mime, sfd);
+  send_response("HTTP/1.1", filename, mime, sfd, node);
 
 
 free_buffers:
   free(filename);
   free(mime);
   free(extension);
+  return 0;
+}
+
+//
+//
+static int handle_http_POST(char *request, size_t *cur_pos, int sfd, Node_t *node) {
+  //send_warning_msg("POST request!\n", sfd);
+  return -1;
+  // should save the content file
 }
 
 #undef FILE_NAME_LENGTH

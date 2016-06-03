@@ -1,6 +1,6 @@
 
 #ifndef _SETUP_H_
-#define _SETUP_H
+#define _SETUP_H_
 
 #include "log.h"
 #include <netinet/in.h>
@@ -14,14 +14,14 @@
 #include <errno.h>
 
 // for printing some additional information
-#define DEBUG
+//#define DEBUG
 
 #define FALSE 0
 #define TRUE  1
 
 #define PORT (srv_settings.port)
-#define MAXEVENTS 64
-#define MAXCONNECTIONS 10   // max number of connections in a queue for 'accept'ing
+#define MAXEVENTS 128
+#define MAXCONNECTIONS 128   // max number of connections for listening
 #define WWWROOT (srv_settings.wwwroot)		// wwwroot dir
 #define MIME_FILE (srv_settings.mime_file)
 #define GENERATED_HTMLS (srv_settings.generated_htmls_dir)
