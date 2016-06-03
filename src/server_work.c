@@ -216,6 +216,8 @@ static char *strcat_buf(char *big_buf, char *temporary_buf, size_t *big_buf_max_
   }
 
   big_buf = strncat(big_buf, temporary_buf, BUFSIZE);
+  //
+  big_buf[*big_buf_max_len - 1] = '\0';
   return big_buf;
 }
 
@@ -237,8 +239,8 @@ static int call_request_handling(char *req, int fd) {
   if (req) {
     // we can see @req
 #ifdef DEBUG
-    PRINT("%s\n", req);
-    PRINT("This is END of request\n\n");
+    //PRINT("%s\n", req);
+    //PRINT("This is END of request\n\n");
 #endif
   }
 
