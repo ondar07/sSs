@@ -1,13 +1,16 @@
 
 ==================================================
 
+
 WHAT IT IS
 
 This is a web server
 
 Authors: mipteam (Ondar Adygzhy, Podkopaev Alexander, Dvinskikh Darina, Nogin Vladislav)
 
+
 ==================================================
+
 
 HOW IT WORKS
 
@@ -18,9 +21,9 @@ select() monitors a fixed number of descriptors. poll() doesn't have a fixed lim
 
 epoll() doesn't have such disadvantages. Moreover, it can handle a larger number of events.
 
-Also, edge-triggered mode is used
 
 ===================================================
+
 
 FEATURES
 
@@ -36,9 +39,23 @@ Dut to supporting the database (sqlite3) with pathes for icons, the web server i
 
 ===================================================
 
+
 WHERE IT BE USEFUL
 
 So you are able to share some files between your house devices (mobile phone, tablet)
 
 Another application -- sharing files between virtual machines
 
+
+===================================================
+
+
+HOW TO LAUNCH
+
+1. Linux >= 2.6
+
+2. Make directories for generated htmls of directories
+
+3. Specify settings in config file
+
+4. make

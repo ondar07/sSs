@@ -26,7 +26,7 @@ static int send_file(FILE *fp, int sfd);
 //      0
 //    else
 //      -1
-static int read_word_from_req_into_buf(char *original_req, char *buf, size_t *cur_pos, size_t max) {
+int read_word_from_req_into_buf(char *original_req, char *buf, size_t *cur_pos, size_t max) {
   size_t read_chars_count = 0;
   size_t i;
   size_t original_req_len = strlen(original_req);
@@ -149,7 +149,10 @@ static char * is_header_full(char *request) {
 #undef CRLFCRLF
 }
 
-static ssize_t send_warning_msg(char *message, int socket_fd);
+ssize_t send_warning_msg(char *message, int socket_fd);
+
+// see in post_request.c
+extern int recv_file(char *request, int sfd, Node_t *node);
 
 //
 // This function processes @request
@@ -169,12 +172,28 @@ int handle(char *request, int sfd, List_t *list) {
   // find possible element of ext_data_t
   node = find_node(list, sfd);
   if (node) {
-    if (is_header_full(node->data.header) ) {
-      // header is full, so we send it earlier
-      // and it needs only to send a requested resource
-      // for GET requestes
-      res = send_file(node->data.fp, sfd);
-      goto check_res;
+    if (node->data.status == REQUEST_COMPLETED) {
+      if (node->data.header)
+        free(node->data.header);
+      // close connection
+      remove_node(list, sfd);
+      return 0;
+    }
+
+    if (is_header_full(node->data.header)) {
+      if (node->data.type == GET_TYPE) {
+        // header is full, so we send it earlier
+        // and it needs only to send a requested resource
+        // for GET requestes
+        res = send_file(node->data.fp, sfd);
+        goto check_res;
+      } else if (node->data.type == POST_TYPE) {
+        // see in request_handling.c
+        // moreover, this function send to client acknowledgment of received data
+        res = recv_file(request, sfd, node);
+
+        goto check_res;
+      }
     }
 
     // else (header is NOT FULL yet)
@@ -213,7 +232,8 @@ int handle(char *request, int sfd, List_t *list) {
     PRINT("header is not full yet\n");
 #endif
     send_warning_msg("header is not correct\n", sfd);
-    return 0;
+    node->data.status = REQUEST_COMPLETED;
+    return -1;
   }
 
   // here @request may be different from original @request
@@ -235,7 +255,7 @@ int handle(char *request, int sfd, List_t *list) {
       if (res < 0) {
         return 0;
       }
-
+      node->data.type = GET_TYPE;
       // now we should send a file, so
       return -1;
     case HEAD_REQUEST :
@@ -250,6 +270,7 @@ int handle(char *request, int sfd, List_t *list) {
 #endif
       // but it is not implemented
       res = handle_http_POST(request, &cur_pos, sfd, node);
+      node->data.type = POST_TYPE;
       if (res < 0) {
         return -1;
       }
@@ -283,14 +304,8 @@ check_res:
     if (!node)
       return 0;
 
-    // free memory
-    if (node->data.header)
-      free(node->data.header);
-
-    remove_node(list, sfd);
-    return 0;
+    node->data.status = REQUEST_COMPLETED;
   }
-
   //
   return -1;
 }
@@ -484,7 +499,7 @@ static ssize_t send_bytes(char *bytes, size_t length, int socket_fd) {
     PRINT("[send_bytes]ERROR: cannot send a reply to client with sfd=%d (errno=%d )\n", socket_fd, errno);
   }
 
-  PRINT("[send_bytes]bytes_sent=%zu\n", bytes_sent);
+  //PRINT("[send_bytes]bytes_sent=%zu\n", bytes_sent);
 #ifdef DEBUG
   //PRINT("\nSEND msg: %s\n", bytes);
 #endif
@@ -492,7 +507,7 @@ static ssize_t send_bytes(char *bytes, size_t length, int socket_fd) {
   return bytes_sent;
 }
 
-static ssize_t send_warning_msg(char *message, int socket_fd) {
+ssize_t send_warning_msg(char *message, int socket_fd) {
   size_t msg_length = strlen(message);
   return send_bytes(message, msg_length, socket_fd);
 }
@@ -843,9 +858,7 @@ free_buffers:
 //
 //
 static int handle_http_POST(char *request, size_t *cur_pos, int sfd, Node_t *node) {
-  //send_warning_msg("POST request!\n", sfd);
   return -1;
-  // should save the content file
 }
 
 #undef FILE_NAME_LENGTH

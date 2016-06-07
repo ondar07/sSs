@@ -14,7 +14,7 @@
 #include <errno.h>
 
 // for printing some additional information
-//#define DEBUG
+#define DEBUG
 
 #define FALSE 0
 #define TRUE  1

@@ -82,12 +82,14 @@ static int does_file_exist(char *file_path) {
   return TRUE;
 }
 
-
-
 static void print_html_header(FILE *fp) {
   fprintf(fp, "<!DOCTYPE html>\n");
   fprintf(fp, "<html>\n");
   fprintf(fp, "<body>\n");
+  fprintf(fp, "<form enctype=\"multipart/form-data\" method=\"post\">\n");
+  fprintf(fp, "<p><input type=\"file\" name=\"f\">\n");
+  fprintf(fp, "<input type=\"submit\" value=\"Send file\"></p>\n");
+  fprintf(fp, "</form>\n");
 }
 
 static void print_html_end(FILE *fp) {
